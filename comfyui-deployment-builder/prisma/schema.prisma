@@ -1,0 +1,423 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"  // Change to "postgresql" for production
+  url      = env("DATABASE_URL")
+}
+
+// ================================
+// USER MANAGEMENT & AUTHENTICATION
+// ================================
+
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  name        String?
+  image       String?
+  role        Role     @default(USER)
+  isActive    Boolean  @default(true)
+  
+  // Relations
+  apiTokens   ApiToken[]
+  deployments Deployment[]
+  
+  // Timestamps
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  lastLoginAt DateTime?
+  
+  @@map("users")
+}
+
+model ApiToken {
+  id        String   @id @default(cuid())
+  name      String   // User-friendly name for the token
+  service   Service  // Which service this token is for
+  token     String   // Encrypted token value
+  isActive  Boolean  @default(true)
+  lastUsed  DateTime?
+  
+  // Relations
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("api_tokens")
+}
+
+// ================================
+// CONTENT MANAGEMENT
+// ================================
+
+model CustomNode {
+  id              String   @id @default(cuid())
+  name            String   // Display name
+  githubUrl       String   @unique // Primary identifier
+  branch          String   @default("main")
+  description     String?
+  author          String?
+  
+  // Source information for ComfyUI Registry integration
+  source          String   @default("MANUAL") // MANUAL, COMFYUI_REGISTRY
+  registryId      String?  // ComfyUI Registry node ID
+  registryUrl     String?  // Registry URL
+  category        String?  // Node category from registry
+  
+  // Installation details
+  installType     String   @default("git") // git, copy, etc.
+  pipRequirements String   @default("[]")  // JSON array of pip packages
+  jsFiles         String   @default("[]")  // JSON array of JS files
+  
+  // Metadata
+  tags            String   @default("[]")  // JSON array of tags
+  nodeClasses     String   @default("[]")  // JSON array of provided node classes
+  
+  // Status
+  isActive        Boolean  @default(true)
+  isVerified      Boolean  @default(false) // Manually verified by admin
+  lastValidated   DateTime?
+  
+  // Relations
+  deploymentNodes DeploymentNode[]
+  
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@map("custom_nodes")
+}
+
+model Model {
+  id             String    @id @default(cuid())
+  
+  // Source information
+  source         Source    // CIVITAI, HUGGINGFACE, DIRECT
+  sourceId       String?   // External ID (CivitAI model ID, HF repo ID)
+  sourceUrl      String?   // Original source URL
+  
+  // Model information
+  name           String
+  description    String?   // Basic description for installer workflow
+  filename       String?   // Target filename
+  type           ModelType
+  targetPath     String?   // Installation path (e.g., models/checkpoints)
+  category       String?   // Subcategory (anime, realistic, etc.)
+  baseModel      String?   // SD1.5, SDXL, etc.
+  
+  // Download information
+  downloadUrl    String
+  fileSize       String?   // File size (e.g., "2.3 GB")
+  authRequired   Boolean   @default(false)
+  
+  // Creator/Author information
+  creatorName    String?   // Model creator username
+  creatorUrl     String?   // Creator profile URL
+  
+  // Version information for installer workflow
+  currentVersion String?   // Current/latest version identifier
+  versionName    String?   // Human-readable version name
+  
+  // License information for installer workflow
+  allowCommercialUse    Boolean @default(false)
+  allowDerivatives      Boolean @default(false)
+  allowDifferentLicense Boolean @default(false)
+  creditRequired        Boolean @default(true)
+  
+  // Rich metadata (stored as JSON)
+  metadata       String    @default("{}")  // JSON string for flexibility
+  // metadata can contain: preview images, stats, all versions, etc.
+  
+  // Status
+  isActive       Boolean   @default(true)
+  isVerified     Boolean   @default(false)
+  lastValidated  DateTime?
+  
+  // Relations
+  deploymentModels DeploymentModel[]
+  downloadStats    ModelDownloadStats?
+  versions         ModelVersion[]
+  
+  // Timestamps
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  
+  @@map("models")
+}
+
+model ModelVersion {
+  id             String   @id @default(cuid())
+  modelId        String   // Foreign key to Model
+  
+  // Version information
+  versionId      String?  // External version ID (CivitAI version ID)
+  name           String   // Version name
+  description    String?  // Version-specific description
+  
+  // Download information for this version
+  downloadUrl    String   // Version-specific download URL
+  filename       String?  // Version-specific filename
+  fileSize       String?  // File size for this version
+  fileHash       String?  // File hash for integrity checking
+  
+  // Version metadata
+  isLatest       Boolean  @default(false) // Is this the latest version
+  releaseNotes   String?  // Version release notes
+  
+  // Relations
+  model          Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  releasedAt     DateTime @default(now()) // When this version was released
+  
+  @@map("model_versions")
+}
+
+// ================================
+// DEPLOYMENT CONFIGURATION
+// ================================
+
+model Deployment {
+  id               String   @id @default(cuid())
+  name             String
+  description      String?
+  
+  // Ownership and visibility
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isTemplate       Boolean  @default(false) // Can be used as template by others
+  isPublic         Boolean  @default(false) // Visible to other users
+  templateCategory String?  // Category if used as template
+  
+  // Generated content
+  generatedScript  String?  // Last generated script
+  scriptType       String   @default("runpod") // runpod, docker, etc.
+  
+  // Configuration
+  environmentVars  String   @default("{}") // JSON object of env vars
+  customSettings   String   @default("{}") // JSON object of custom settings
+  
+  // Relations
+  deploymentNodes  DeploymentNode[]
+  deploymentModels DeploymentModel[]
+  systemPackages   SystemPackage[]
+  
+  // Timestamps
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  lastGenerated    DateTime?
+  
+  @@map("deployments")
+}
+
+model DeploymentNode {
+  // Composite key
+  deploymentId String
+  customNodeId String
+  
+  // Additional configuration per node
+  isEnabled    Boolean @default(true)
+  config       String  @default("{}") // JSON configuration for this specific deployment
+  
+  // Relations
+  deployment   Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  customNode   CustomNode @relation(fields: [customNodeId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  createdAt    DateTime @default(now())
+  
+  @@id([deploymentId, customNodeId])
+  @@map("deployment_nodes")
+}
+
+model DeploymentModel {
+  // Composite key
+  deploymentId String
+  modelId      String
+  
+  // Version selection for installer workflow
+  versionId    String?  // Specific version to use (null = latest)
+  
+  // Installation configuration
+  targetPath   String  // Where to install in ComfyUI (models/checkpoints, models/loras, etc.)
+  customName   String? // Override filename if needed
+  isEnabled    Boolean @default(true)
+  
+  // Relations
+  deployment   Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  model        Model      @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  createdAt    DateTime @default(now())
+  
+  @@id([deploymentId, modelId])
+  @@map("deployment_models")
+}
+
+model SystemPackage {
+  id           String      @id @default(cuid())
+  deploymentId String
+  
+  // Package information
+  packageType  PackageType // APT, PIP
+  name         String
+  version      String?     // Version constraint (>=1.0, ==2.0, etc.)
+  installUrl   String?     // Custom install URL for pip packages
+  
+  // Relations
+  deployment   Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  createdAt    DateTime @default(now())
+  
+  @@map("system_packages")
+}
+
+// ================================
+// SYNC & MONITORING
+// ================================
+
+model SyncJob {
+  id          String     @id @default(cuid())
+  type        SyncType   // COMFYUI_NODES, CIVITAI_MODELS, URL_VALIDATION
+  status      SyncStatus @default(PENDING)
+  
+  // Job details
+  totalItems  Int?
+  processedItems Int @default(0)
+  successItems   Int @default(0)
+  failedItems    Int @default(0)
+  
+  // Results
+  results     String @default("{}") // JSON object with detailed results
+  errorLog    String?
+  
+  // Timestamps
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  
+  @@map("sync_jobs")
+}
+
+model UrlValidation {
+  id           String   @id @default(cuid())
+  url          String   @unique
+  lastChecked  DateTime @default(now())
+  isValid      Boolean
+  statusCode   Int?
+  errorMessage String?
+  
+  // Track what uses this URL
+  modelId      String?
+  customNodeId String?
+  
+  @@map("url_validations")
+}
+
+// ================================
+// ANALYTICS & USAGE
+// ================================
+
+model DeploymentUsage {
+  id           String   @id @default(cuid())
+  deploymentId String
+  
+  // Usage tracking
+  generatedAt  DateTime @default(now())
+  scriptType   String   // runpod, docker, etc.
+  userAgent    String?
+  ipAddress    String?
+  
+  @@map("deployment_usage")
+}
+
+model ModelDownloadStats {
+  id          String   @id @default(cuid())
+  modelId     String?
+  
+  // Stats
+  downloadCount Int @default(0)
+  lastDownload DateTime?
+  
+  // Relations (optional foreign key for cleanup)
+  model       Model? @relation(fields: [modelId], references: [id], onDelete: SetNull)
+  
+  @@unique([modelId])
+  @@map("model_download_stats")
+}
+
+// ================================
+// ENUMS
+// ================================
+
+enum Role {
+  ADMIN     // Full system access
+  CURATOR   // Can manage content (models, nodes)
+  USER      // Can create deployments
+}
+
+enum Service {
+  CIVITAI
+  HUGGINGFACE
+  COMFYUI_REGISTRY
+}
+
+enum Source {
+  CIVITAI      // From CivitAI
+  HUGGINGFACE  // From HuggingFace
+  DIRECT       // Direct URL
+  GITHUB       // GitHub releases
+}
+
+enum ModelType {
+  CHECKPOINT
+  LORA
+  VAE
+  CONTROLNET
+  UPSCALER
+  EMBEDDING
+  HYPERNETWORK
+  UNET
+  CLIP
+  T2I_ADAPTER
+  IPADAPTER
+  PREPROCESSOR
+  ESRGAN
+  ULTRALYTICS_BBOX
+  ULTRALYTICS_SEGM
+  SAM
+  INSIGHTFACE
+  CLIP_VISION
+  STYLE_MODELS
+  OTHER
+}
+
+enum PackageType {
+  APT
+  PIP
+}
+
+enum SyncType {
+  COMFYUI_NODES
+  CIVITAI_MODELS
+  URL_VALIDATION
+  HUGGINGFACE_MODELS
+}
+
+enum SyncStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
